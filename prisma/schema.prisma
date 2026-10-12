@@ -1,0 +1,314 @@
+generator client {
+  provider = "prisma-client-js"
+}
+datasource db {
+  provider = "postgresql"
+  url = env("DATABASE_URL")
+}
+
+enum Role {
+  SUPER_ADMIN
+  COMPANY_ADMIN
+  DISPATCHER
+  DRIVER
+}
+enum SubStatus {
+  TRIAL
+  ACTIVE
+  PAST_DUE
+  SUSPENDED
+  CANCELLED
+}
+enum TripStatus {
+  REGISTERING
+  LOADING
+  DEPARTED
+  IN_TRANSIT
+  ARRIVED
+  HANDING_OVER
+  COMPLETED
+}
+enum ShipmentStatus {
+  REGISTERED
+  LOADED
+  IN_TRANSIT
+  ARRIVED
+  READY_FOR_PICKUP
+  DELIVERED
+  DELIVERY_FAILED
+  RETURNED
+  PROBLEM
+  CANCELLED
+}
+enum PayMethod {
+  CASH
+  TRANSFER
+  QPAY
+  OTHER
+}
+enum NotifStatus {
+  QUEUED
+  SENT
+  FAILED
+}
+
+model SubscriptionPlan {
+  id String @id @default(cuid())
+  code String @unique            // STARTER | STANDARD | PRO
+  name String
+  priceMnt Int
+  maxDrivers Int
+  maxVehicles Int
+  maxStaff Int
+  subscriptions Subscription[]
+}
+
+model Organization {
+  id String @id @default(cuid())
+  name String
+  ownerName String
+  phone String
+  address String?
+  logoUrl String?
+  brandColor String @default("#2563eb")
+  isActive Boolean @default(true)
+  deletedAt DateTime?
+  createdAt DateTime @default(now())
+  subscription Subscription?
+  settings OrganizationSettings?
+  users User[]
+  drivers Driver[]
+  vehicles Vehicle[]
+  trips Trip[]
+  shipments Shipment[]
+  payments Payment[]
+  notifications Notification[]
+  auditLogs AuditLog[]
+}
+
+model Subscription {
+  id String @id @default(cuid())
+  organizationId String @unique
+  organization Organization @relation(fields: [organizationId], references: [id])
+  planId String
+  plan SubscriptionPlan @relation(fields: [planId], references: [id])
+  status SubStatus @default(TRIAL)
+  trialStartsAt DateTime?
+  trialEndsAt DateTime?
+  paidUntil DateTime?
+  manualNote String?             // Phase 1: гар баталгаажуулалт
+}
+
+model OrganizationSettings {
+  organizationId String @id
+  organization Organization @relation(fields: [organizationId], references: [id])
+  requireReceiverName Boolean @default(false)
+  requireHandoverPhoto Boolean @default(false)
+  requireHandoverCode Boolean @default(false)
+  smsEnabled Boolean @default(false)
+  locationRetentionDays Int @default(30)
+}
+
+model User {
+  id String @id @default(cuid())
+  organizationId String?         // SUPER_ADMIN-д null
+  organization Organization? @relation(fields: [organizationId], references: [id])
+  role Role
+  name String
+  phone String @unique
+  passwordHash String
+  isActive Boolean @default(true)
+  deletedAt DateTime?
+  createdAt DateTime @default(now())
+  driver Driver?
+  @@index([organizationId, role])
+}
+
+model Driver {
+  id String @id @default(cuid())
+  organizationId String
+  organization Organization @relation(fields: [organizationId], references: [id])
+  userId String @unique
+  user User @relation(fields: [userId], references: [id])
+  photoUrl String?
+  isActive Boolean @default(true)
+  locationConsent Boolean @default(false)
+  deletedAt DateTime?
+  trips Trip[]
+  assignments DriverVehicleAssignment[]
+  locations DriverLocation[]
+  @@index([organizationId])
+}
+
+model Vehicle {
+  id String @id @default(cuid())
+  organizationId String
+  organization Organization @relation(fields: [organizationId], references: [id])
+  plate String
+  make String?
+  model String?
+  type String?
+  capacityKg Int?
+  isActive Boolean @default(true)
+  deletedAt DateTime?
+  trips Trip[]
+  assignments DriverVehicleAssignment[]
+  @@unique([organizationId, plate])
+}
+
+// Жолооч-машин холбоо тогтмол биш: рейс бүрээр хуваарилна
+model DriverVehicleAssignment {
+  id String @id @default(cuid())
+  organizationId String
+  driverId String
+  driver Driver @relation(fields: [driverId], references: [id])
+  vehicleId String
+  vehicle Vehicle @relation(fields: [vehicleId], references: [id])
+  tripId String @unique
+  trip Trip @relation(fields: [tripId], references: [id])
+  createdAt DateTime @default(now())
+  @@index([organizationId, driverId])
+}
+
+model Trip {
+  id String @id @default(cuid())
+  organizationId String
+  organization Organization @relation(fields: [organizationId], references: [id])
+  code String
+  originCity String
+  destinationCity String
+  driverId String
+  driver Driver @relation(fields: [driverId], references: [id])
+  vehicleId String
+  vehicle Vehicle @relation(fields: [vehicleId], references: [id])
+  status TripStatus @default(REGISTERING)
+  departedAt DateTime?
+  arrivedAt DateTime?
+  createdAt DateTime @default(now())
+  assignment DriverVehicleAssignment?
+  shipments Shipment[]
+  @@unique([organizationId, code])
+  @@index([organizationId, status, createdAt])
+}
+
+model Shipment {
+  id String @id @default(cuid())
+  organizationId String
+  organization Organization @relation(fields: [organizationId], references: [id])
+  trackingCode String @unique
+  idempotencyKey String                       // offline sync / давхар даралтаас хамгаална
+  tripId String
+  trip Trip @relation(fields: [tripId], references: [id])
+  receiverPhone String                        // 8 оронтой, +976-гүй хэлбэрээр хадгална
+  receiverName String?
+  senderPhone String?
+  description String?
+  pieceCount Int @default(1)
+  deliveredPieces Int @default(0)             // хэсэгчилсэн олголт
+  status ShipmentStatus @default(REGISTERED)
+  totalPriceMnt Int @default(0)
+  paidMnt Int @default(0)
+  photoUrl String?
+  createdById String
+  deletedAt DateTime?
+  createdAt DateTime @default(now())
+  pieces ShipmentPiece[]
+  history ShipmentStatusHistory[]
+  handovers ShipmentHandoverRecord[]
+  payments Payment[]
+  @@unique([organizationId, idempotencyKey])
+  @@index([organizationId, receiverPhone])
+  @@index([organizationId, tripId, status])
+  @@index([organizationId, status, createdAt])
+}
+
+model ShipmentPiece {
+  id String @id @default(cuid())
+  shipmentId String
+  shipment Shipment @relation(fields: [shipmentId], references: [id])
+  seq Int
+  deliveredAt DateTime?
+  @@unique([shipmentId, seq])
+}
+
+model ShipmentStatusHistory {
+  id String @id @default(cuid())
+  organizationId String
+  shipmentId String
+  shipment Shipment @relation(fields: [shipmentId], references: [id])
+  fromStatus ShipmentStatus?
+  toStatus ShipmentStatus
+  changedById String
+  note String?
+  createdAt DateTime @default(now())
+  @@index([organizationId, shipmentId])
+}
+
+model ShipmentHandoverRecord {
+  id String @id @default(cuid())
+  organizationId String
+  shipmentId String
+  shipment Shipment @relation(fields: [shipmentId], references: [id])
+  piecesHanded Int
+  receiverName String?
+  receiverPhone String?
+  verifyCode String?
+  signatureUrl String?
+  photoUrl String?
+  handedById String
+  createdAt DateTime @default(now())
+  @@index([organizationId, shipmentId])
+}
+
+model Payment {
+  id String @id @default(cuid())
+  organizationId String
+  organization Organization @relation(fields: [organizationId], references: [id])
+  shipmentId String
+  shipment Shipment @relation(fields: [shipmentId], references: [id])
+  amountMnt Int
+  method PayMethod
+  receivedById String
+  paidAt DateTime @default(now())
+  @@index([organizationId, paidAt])
+}
+
+model DriverLocation {
+  id String @id @default(cuid())
+  organizationId String
+  driverId String
+  driver Driver @relation(fields: [driverId], references: [id])
+  tripId String?
+  lat Float
+  lng Float
+  recordedAt DateTime @default(now())
+  @@index([organizationId, driverId, recordedAt])
+}
+
+model Notification {
+  id String @id @default(cuid())
+  organizationId String
+  organization Organization @relation(fields: [organizationId], references: [id])
+  shipmentId String?
+  template String                // REGISTERED | DEPARTED | ARRIVED | PICKUP | DELIVERED
+  toPhone String
+  body String
+  status NotifStatus @default(QUEUED)
+  attempts Int @default(0)
+  lastError String?
+  createdAt DateTime @default(now())
+  @@index([organizationId, status])
+}
+
+model AuditLog {
+  id String @id @default(cuid())
+  organizationId String?
+  organization Organization? @relation(fields: [organizationId], references: [id])
+  actorId String?
+  action String
+  entity String
+  entityId String?
+  meta Json?
+  createdAt DateTime @default(now())
+  @@index([organizationId, createdAt])
+}
