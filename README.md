@@ -1,0 +1,42 @@
+# CARGO HUB — Монголын карго компаниудад зориулсан multi-tenant SaaS
+
+## Одоогийн төлөв (шударга тайлан)
+| Хэсэг | Төлөв |
+|---|---|
+| PostgreSQL/Prisma схем (бүх 19 entity, индекс, unique, soft-delete) | ✅ Бичигдсэн (`prisma/schema.prisma`) |
+| .env.example | ✅ |
+| Next.js app, Auth, API, UI, seed, тест | ⏳ ХИЙГДЭЭГҮЙ. Дараагийн алхам |
+| QR, GPS, offline, SMS, public tracking, төлбөрийн gateway | ⏳ Phase 2–3 |
+
+Энэ хэсэгт ямар ч placeholder UI, хуурамч амжилттай мэдэгдэл байхгүй.
+
+## Архитектурын шийдвэрүүд (default)
+- **Tenant тусгаарлалт:** бүх хүснэгтэд `organizationId`. Сервер талд session-ээс organizationId авна (client-ийн утгад итгэхгүй). Өгөгдлийн сангийн түвшинд PostgreSQL Row-Level Security (`SET app.org_id` + policy) нэмнэ.
+- **Жолооч–машин:** рейс бүрийн `DriverVehicleAssignment`-ээр.
+- **Утас:** 8 оронтой хэлбэрээр хадгална, `+976` / `976` угтварыг цэвэрлэнэ. Давхардал зөвшөөрнө.
+- **Давхар олголт хамгаалалт:** `SELECT ... FOR UPDATE` транзакц + `deliveredPieces` шалгалт.
+- **Идемпотент бүртгэл:** `@@unique([organizationId, idempotencyKey])` нь offline sync, давхар даралтаас хамгаална.
+- **Мөнгө:** бүхэл төгрөг (`Int`), тооцоо серверт.
+- **GPS:** PWA зөвхөн апп нээлттэй, зөвшөөрөлтэй үед ажиллана. Тогтвортой background tracking нь Phase 3 (Capacitor/native).
+- **SMS:** adapter + queue, анхдагчаар унтраалттай.
+
+## Дараагийн алхам
+1. `npx create-next-app` + shadcn/ui + Auth.js, `prisma migrate dev`
+2. Seed (3 зохиомол компани), tenant-scoped data layer
+3. Phase 1: login → жолооч/машин/рейс → ачаа бүртгэл → утасны хайлт → олголт → dashboard → тест
+
+## Локал дээр ажиллуулах
+```
+cp .env.example .env
+docker compose up -d            # эсвэл өөрийн PostgreSQL-ийн DATABASE_URL-ийг .env-д бич
+npm install
+npm install next@14             # package.json дахь 14.2.15 нь аюулгүй байдлын засвартай хувилбараар солигдох ёстой
+npx prisma migrate dev --name init
+npx prisma db seed
+npm run dev                     # http://localhost:3000
+```
+Dev нэвтрэх (нууц үг: `cargo1234`): Дорнод Карго А админ `99000101`, ажилтан `99000102`, жолооч `99000110`; Super admin `99000000`.
+
+## Энэ хувилбарт хэрэгжсэн (ШАЛГАГДААГҮЙ: sandbox-д npm install дуусаагүй тул typecheck/run хийгдээгүй)
+Нэвтрэх, ачаа бүртгэх (идемпотент, tracking код, төлөвийн түүх, audit), утас/код-оор хайх, олгох (мөр түгжих транзакц, давхар олголтыг хориглоно).
+Дутуу: dashboard, жолооч/машин/рейс удирдах UI, rate limit, RLS, тест, Phase 2–3 бүгд.
